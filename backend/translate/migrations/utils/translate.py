@@ -1,118 +1,117 @@
 import sounddevice as sd
 import numpy as np
 import queue
-import requests
-import io
-from scipy.io.wavfile import write
-import base64
-import os
+import time
+from faster_whisper import WhisperModel
 
 # ===============================
-# CONFIG
+# CONFIGURATION
 # ===============================
-HF_TOKEN = os.getenv("HF_TOKEN")
-MODEL_ID = "openai/whisper-large-v3"
+# Model sizes: "tiny", "base", "small", "medium", "large-v3"
+# "tiny" or "base" is recommended for real-time CPU usage.
+MODEL_SIZE = "base" 
+DEVICE = "cpu"
+COMPUTE_TYPE = "int8"  # "int8" is lighter and faster on CPU than "float32"
 
-API_URL = f"https://router.huggingface.co/models/{MODEL_ID}"
-HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 SAMPLE_RATE = 16000
 CHANNELS = 1
-CHUNK_DURATION = 2   # seconds per API call
-CHUNK_SIZE = SAMPLE_RATE * CHUNK_DURATION
+# How often to process audio (seconds). 
+# Lower = faster response but higher CPU load.
+TRANSCRIBE_INTERVAL = 2.0 
 
 audio_queue = queue.Queue()
 
 # ===============================
-# AUTOMATIC MICROPHONE SELECTION
+# LOAD MODEL
 # ===============================
-def get_first_input_device():
-    devices = sd.query_devices()
-    for i, dev in enumerate(devices):
-        if dev['max_input_channels'] > 0:
-            print(f"Using input device #{i}: {dev['name']}")
-            return i
-    raise RuntimeError("No input device with channels > 0 found.")
+print(f"⏳ Loading local Whisper model: '{MODEL_SIZE}' ({DEVICE})...")
+print("   (This involves downloading the model on the first run)")
 
-device_index = get_first_input_device()
+try:
+    model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+    print("✅ Model loaded successfully!")
+except Exception as e:
+    print(f"❌ Error loading model: {e}")
+    exit(1)
 
 # ===============================
-# AUDIO CALLBACK
+# AUDIO HANDLING
 # ===============================
 def audio_callback(indata, frames, time, status):
     if status:
-        print("Audio error:", status)
+        print(f"Audio error: {status}")
     audio_queue.put(indata.copy())
 
-# ===============================
-# CALL HUGGINGFACE API
-# ===============================
-def transcribe_chunk(pcm16):
+def get_input_device():
     try:
-        wav_io = io.BytesIO()
-        write(wav_io, SAMPLE_RATE, pcm16)
-        wav_io.seek(0)
-        audio_bytes = wav_io.read()
-        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-
-        payload = {"inputs": audio_b64}
-
-        response = requests.post(
-            API_URL,
-            headers={"Authorization": f"Bearer {HF_API_KEY}"},
-            json=payload,
-            timeout=60
-        )
-
-        resp = response.json()
-        if "error" in resp:
-            print("HF Error:", resp["error"])
-            return ""
-        return resp.get("text", "")
-
-    except Exception as e:
-        print("Request failed:", e)
-        return ""
+        # Prefer a device with 'Microphone' in the name if possible
+        devices = sd.query_devices()
+        for i, dev in enumerate(devices):
+            if dev['max_input_channels'] > 0:
+                return i
+        return None
+    except:
+        return None
 
 # ===============================
 # MAIN LOOP
 # ===============================
 def main():
-    print("\n🎤 Real-time Speech-to-Text using HuggingFace API")
-    print("No model is downloaded locally.")
-    print("Press CTRL+C to stop.\n")
+    device_idx = get_input_device()
+    print(f"\n🎤 Starting Local Transcription ({MODEL_SIZE} model)")
+    print("   No internet required. Processing on CPU.")
+    print("   Press CTRL+C to stop.\n")
 
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=CHANNELS,
-        dtype="float32",
-        callback=audio_callback,
-        device=device_index
-    ):
+    audio_buffer = np.array([], dtype=np.float32)
+    
+    # We accumulate audio and process it in chunks
+    # To simulate a continuous stream, real production apps use VAD (Voice Activity Detection)
+    # This loop is a simple implementation that cuts every X seconds.
 
-        audio_buffer = np.zeros((0, CHANNELS), dtype=np.float32)
+    try:
+        with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, 
+                            callback=audio_callback, device=device_idx):
+            
+            while True:
+                # 1. Accumulate audio from queue
+                while not audio_queue.empty():
+                    chunk = audio_queue.get()
+                    # Flatten to 1D array
+                    chunk = chunk.flatten()
+                    audio_buffer = np.concatenate((audio_buffer, chunk))
 
-        while True:
-            try:
-                # read chunk from microphone queue
-                chunk = audio_queue.get()
-                audio_buffer = np.concatenate((audio_buffer, chunk))
+                # 2. Process if buffer is long enough
+                if len(audio_buffer) >= SAMPLE_RATE * TRANSCRIBE_INTERVAL:
+                    # Isolate the chunk to process
+                    process_chunk = audio_buffer[:int(SAMPLE_RATE * TRANSCRIBE_INTERVAL)]
+                    
+                    # Keep the rest in buffer (or overlap if needed)
+                    # For simple streaming, we just clear processed audio
+                    audio_buffer = audio_buffer[int(SAMPLE_RATE * TRANSCRIBE_INTERVAL):]
 
-                if len(audio_buffer) >= CHUNK_SIZE:
-                    # take a full 2-second chunk
-                    current = audio_buffer[:CHUNK_SIZE]
-                    audio_buffer = audio_buffer[CHUNK_SIZE:]
+                    # 3. Check for silence (simple energy threshold)
+                    # prevents processing empty background noise
+                    if np.abs(process_chunk).mean() > 0.01:
+                        
+                        # 4. Transcribe
+                        # faster-whisper accepts numpy arrays directly
+                        segments, info = model.transcribe(
+                            process_chunk, 
+                            beam_size=5, 
+                            language="en",
+                            vad_filter=True, # Built-in Voice Activity Detection
+                            vad_parameters=dict(min_silence_duration_ms=500)
+                        )
 
-                    # convert float32 → PCM16
-                    pcm16 = (current.flatten() * 32767).astype(np.int16)
+                        for segment in segments:
+                            print(f"🟢 {segment.text.strip()}")
+                    
+                time.sleep(0.1)
 
-                    # send to HuggingFace
-                    text = transcribe_chunk(pcm16)
-                    if text:
-                        print("🟢", text)
-
-            except KeyboardInterrupt:
-                print("\n🛑 Stopped.")
-                break
+    except KeyboardInterrupt:
+        print("\n🛑 Stopped.")
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
 
 if __name__ == "__main__":
     main()

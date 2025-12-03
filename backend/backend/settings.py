@@ -25,12 +25,13 @@ SECRET_KEY = "django-insecure-^0d_iga@ke531_*ld_%2_v774^em+z@ijvotzy7t@m7kgezjde
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -39,6 +40,8 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "translate",
     "rest_framework",
+    "channels", 
+    
 ]
 
 MIDDLEWARE = [
@@ -127,7 +130,24 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 
-from pathlib import Path
-import os
-from dotenv import load_dotenv
+# cors settings.py
+CORS_ALLOW_ALL_ORIGINS = True   
 
+
+ASGI_APPLICATION = "backend.asgi.application"
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],
+        },
+    },
+}
+
+
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+]

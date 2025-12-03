@@ -120,73 +120,43 @@
 
 
 # translate/utils/translate.py
+# translate/utils/translate.py
 import numpy as np
 from faster_whisper import WhisperModel
 
-MODEL_SIZE = "base"
-DEVICE = "cpu"
-COMPUTE_TYPE = "int8"
+# CHANGE 1: Use 'base.en' instead of 'tiny.en'
+# 'base.en' is much smarter at understanding context and accents.
+model = WhisperModel("base.en", device="cpu", compute_type="int8")
 
-print(f"Loading Whisper model ({MODEL_SIZE})...")
-
-model = WhisperModel(
-    MODEL_SIZE,
-    device=DEVICE,
-    compute_type=COMPUTE_TYPE
-)
-
-print("Whisper model loaded successfully.")
-
-def transcribe_audio_chunk(audio_bytes):
+def transcribe_audio_chunk(bytes_data):
     try:
-        # --- ADD THIS GUARD ---
-        # If we receive an odd number of bytes, it's garbage/WebM. 
-        # Trim the last byte so numpy doesn't crash, but it will sound like static.
-        if len(audio_bytes) % 2 != 0:
-            print(f"⚠️ Warning: Received odd byte length ({len(audio_bytes)}). Trimming 1 byte.")
-            audio_bytes = audio_bytes[:-1]
+        # Convert to Float32
+        audio_array = np.frombuffer(bytes_data, dtype=np.int16).astype(np.float32) / 32768.0
 
-        # 1. Convert raw bytes...
-        audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
-        
-        # 2. Normalize to range [-1, 1] (Whisper expects this)
-        audio_np = audio_np / 32768.0
-
-        # 3. Transcribe
+        # CHANGE 2: Add 'vad_filter=True'
+        # Faster-Whisper has built-in VAD (Voice Activity Detection).
+        # This prevents it from trying to transcribe breathing or fan noise.
         segments, info = model.transcribe(
-            audio_np,
-            beam_size=5,
-            language="en",
-            vad_filter=True, # Remove silence
-            vad_parameters=dict(min_silence_duration_ms=300)
+            audio_array, 
+            beam_size=1, 
+            language="en", 
+            condition_on_previous_text=False,
+            vad_filter=True, # <--- Enable built-in silence filtering
+            vad_parameters=dict(min_silence_duration_ms=500)
         )
 
-        # 4. Format Result
-        full_text_parts = []
-        segment_list = []
-        
-        for seg in segments:
-            text = seg.text.strip()
-            if text:
-                full_text_parts.append(text)
-                segment_list.append({
-                    "start": float(seg.start),
-                    "end": float(seg.end),
-                    "text": text
-                })
+        full_text = " ".join([seg.text for seg in segments]).strip()
 
-        full_text = " ".join(full_text_parts).strip()
-
-        # Calculate duration based on number of samples (Sample Rate 16000)
-        duration_seconds = len(audio_np) / 16000.0
+        if not full_text:
+            return None
 
         return {
             "text": full_text,
-            "duration": round(duration_seconds, 3),
-            "word_count": len(full_text.split()) if full_text else 0,
-            "segments": segment_list
+            "duration": info.duration,
+            "word_count": len(full_text.split()),
+            "segments": []
         }
 
     except Exception as e:
-        print(f"Transcription Error: {e}")
+        print(f"Error: {e}")
         return None

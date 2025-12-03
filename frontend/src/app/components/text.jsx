@@ -7,6 +7,17 @@ import {
   sendStopSignal,
 } from "./audioClient";
 
+// --- Helper: Convert Float32 (Browser) to Int16 (Backend) ---
+const float32ToInt16 = (float32Array) => {
+  const int16Array = new Int16Array(float32Array.length);
+  for (let i = 0; i < float32Array.length; i++) {
+    let s = Math.max(-1, Math.min(1, float32Array[i])); // Clamp
+    s = s < 0 ? s * 0x8000 : s * 0x7fff; // Scale
+    int16Array[i] = s;
+  }
+  return int16Array.buffer;
+};
+
 const processPayload = (payload, fallbackDuration = 0) => {
   const text = payload.text ?? payload.transcript ?? "";
   const durationRaw = payload.duration ?? payload.durationSeconds;
@@ -25,7 +36,6 @@ const processPayload = (payload, fallbackDuration = 0) => {
     duration,
     word_count: payload.word_count ?? payload.wordCount ?? wordCountFromText,
     segments: payload.segments ?? [],
-    // Avoid client-local date formatting differences; prefer backend timestamp if provided.
     timestamp: payload.timestamp ?? "",
   };
 };
@@ -35,8 +45,13 @@ export default function Text() {
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState(null);
   const [wsReady, setWsReady] = useState(false);
-  const mediaRecorderRef = useRef(null);
+
+  // Refs for AudioContext management
+  const audioContextRef = useRef(null);
   const streamRef = useRef(null);
+  const processorRef = useRef(null);
+  const inputSourceRef = useRef(null);
+
   const timerRef = useRef(null);
   const wsRef = useRef(null);
   const elapsedRef = useRef(0);
@@ -61,6 +76,7 @@ export default function Text() {
 
     return () => {
       isMounted = false;
+      stopRecording(); // Cleanup on unmount
     };
   }, []);
 
@@ -77,11 +93,6 @@ export default function Text() {
   const startRecording = async () => {
     clearSession();
 
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      alert("Media devices API not supported in this browser");
-      return;
-    }
-
     const socket = getActiveSocket();
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       alert("WebSocket connection is not ready yet. Please try again.");
@@ -89,26 +100,52 @@ export default function Text() {
     }
 
     try {
+      // 1. Get Microphone Stream
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 16000, channelCount: 1 },
+        audio: {
+          sampleRate: 16000, // Try to request 16k
+          channelCount: 1,
+          echoCancellation: true,
+          autoGainControl: true,
+          noiseSuppression: true,
+        },
       });
       streamRef.current = stream;
 
-      const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      mediaRecorderRef.current = mr;
+      // 2. Initialize AudioContext
+      const audioContext = new (window.AudioContext ||
+        window.webkitAudioContext)({
+        sampleRate: 16000, // Force 16k context if possible
+      });
+      audioContextRef.current = audioContext;
 
-      mr.ondataavailable = async (event) => {
-        if (
-          event.data &&
-          event.data.size > 0 &&
-          socket.readyState === WebSocket.OPEN
-        ) {
-          const arrayBuffer = await event.data.arrayBuffer();
-          socket.send(arrayBuffer);
+      // 3. Create Source
+      const source = audioContext.createMediaStreamSource(stream);
+      inputSourceRef.current = source;
+
+      // 4. Create Processor (BufferSize, InputChannels, OutputChannels)
+      // Buffer size 4096 gives ~0.25s chunks at 16kHz
+      const processor = audioContext.createScriptProcessor(2048, 1, 1);
+      processorRef.current = processor;
+
+      // 5. Handle Audio Data
+      processor.onaudioprocess = (e) => {
+        if (!isRecording && socket.readyState !== WebSocket.OPEN) return;
+
+        const inputData = e.inputBuffer.getChannelData(0); // Raw Float32
+        
+        // Convert to Int16 PCM
+        const pcmData = float32ToInt16(inputData);
+
+        // Send to Backend
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(pcmData);
         }
       };
 
-      mr.start(200);
+      // 6. Connect the graph
+      source.connect(processor);
+      processor.connect(audioContext.destination); // Required for script processor to run
 
       setIsRecording(true);
       timerRef.current = setInterval(() => {
@@ -127,19 +164,27 @@ export default function Text() {
     }
 
     setIsRecording(false);
-    try {
-      if (
-        mediaRecorderRef.current &&
-        mediaRecorderRef.current.state !== "inactive"
-      )
-        mediaRecorderRef.current.stop();
-    } catch (err) {
-      console.warn(err);
+
+    // Stop Audio Context & Processor
+    if (inputSourceRef.current) {
+      inputSourceRef.current.disconnect();
+      inputSourceRef.current = null;
     }
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    // Stop Stream Tracks
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+
     sendStopSignal();
   };
 

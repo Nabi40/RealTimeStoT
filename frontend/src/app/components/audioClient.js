@@ -1,7 +1,7 @@
 // audioClient.js
 let socket = null;
 
-export const connectWebsocket = (onMessage, url = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/transcribe/') => {
+export const connectWebsocket = (onMessage, url = process.env.NEXT_PUBLIC_WS_URL) => {
   return new Promise((resolve, reject) => {
     if (socket && socket.readyState === WebSocket.OPEN) {
       resolve(socket);

@@ -1,4 +1,4 @@
-# translate/consumers.py
+
 # translate/consumers.py
 import json
 import numpy as np

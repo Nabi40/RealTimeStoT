@@ -1,0 +1,14 @@
+
+Django>=4.2
+djangorestframework>=3.14
+channels>=4.0
+channels-redis>=4.1
+numpy>=1.24
+scipy>=1.11
+sounddevice>=0.4.8 
+faster-whisper>=0.6.0
+redis>=5.3
+uvicorn>=0.26
+requests>=2.31
+Pillow>=10.0
+typing-extensions>=4.7

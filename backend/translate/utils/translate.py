@@ -118,8 +118,6 @@
 
 
 
-
-# translate/utils/translate.py
 # translate/utils/translate.py
 import numpy as np
 from faster_whisper import WhisperModel

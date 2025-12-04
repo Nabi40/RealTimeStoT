@@ -105,9 +105,9 @@ export default function Text() {
         audio: {
           sampleRate: 16000, // Try to request 16k
           channelCount: 1,
-          echoCancellation: true,
-          autoGainControl: true,
-          noiseSuppression: true,
+          echoCancellation: false,
+          autoGainControl: false,
+          noiseSuppression: false,
         },
       });
       streamRef.current = stream;
@@ -125,7 +125,7 @@ export default function Text() {
 
       // 4. Create Processor (BufferSize, InputChannels, OutputChannels)
       // Buffer size 4096 gives ~0.25s chunks at 16kHz
-      const processor = audioContext.createScriptProcessor(2048, 1, 1);
+      const processor = audioContext.createScriptProcessor(512, 1, 1);
       processorRef.current = processor;
 
       // 5. Handle Audio Data
@@ -221,30 +221,12 @@ export default function Text() {
         />
 
         <div className="relative z-10 h-full flex flex-col justify-between">
-          <div className="p-6 overflow-auto space-y-6">
-            <div className="flex justify-center items-center space-x-4">
-              <div className="bg-gray-100 flex justify-center items-center text-gray-900 rounded-xl p-4 max-w-xl shadow">
-                <div className="text-sm">
-                  Hi, welcome to Turn your voice in Text! Go ahead and send me a
-                  message. <span className="ml-1">😊</span>
-                </div>
-                <span className="absolute right-6 text-xs text-gray-500">
-                  12:45
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-start justify-end space-x-4"></div>
-          </div>
 
           <div className="px-4 py-3 bg-gray-200 border-t border-gray-300">
             <div className="max-w-full mx-auto flex items-center gap-3">
-              <input
-                aria-label="Message"
-                className="flex-1 bg-white placeholder-gray-400 rounded-lg px-4 py-3 shadow-inner focus:outline-none"
-                placeholder="Enter your message..."
-              />
-
+              <div className="grow text-black font-bold"  >
+              <h1>Click to Start/Stop the session</h1>
+              </div>
               <button
                 type="button"
                 disabled={!wsReady}

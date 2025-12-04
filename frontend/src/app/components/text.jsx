@@ -56,6 +56,37 @@ export default function Text() {
   const wsRef = useRef(null);
   const elapsedRef = useRef(0);
 
+  const stopRecording = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    setIsRecording(false);
+
+    // Stop Audio Context & Processor
+    if (inputSourceRef.current) {
+      inputSourceRef.current.disconnect();
+      inputSourceRef.current = null;
+    }
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    // Stop Stream Tracks
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+
+    sendStopSignal();
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -133,7 +164,7 @@ export default function Text() {
         if (!isRecording && socket.readyState !== WebSocket.OPEN) return;
 
         const inputData = e.inputBuffer.getChannelData(0); // Raw Float32
-        
+
         // Convert to Int16 PCM
         const pcmData = float32ToInt16(inputData);
 
@@ -155,37 +186,6 @@ export default function Text() {
       console.error(err);
       alert("Could not start recording: " + (err.message || err));
     }
-  };
-
-  const stopRecording = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-
-    setIsRecording(false);
-
-    // Stop Audio Context & Processor
-    if (inputSourceRef.current) {
-      inputSourceRef.current.disconnect();
-      inputSourceRef.current = null;
-    }
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
-    // Stop Stream Tracks
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-
-    sendStopSignal();
   };
 
   const toggleRecording = () => {
@@ -221,11 +221,10 @@ export default function Text() {
         />
 
         <div className="relative z-10 h-full flex flex-col justify-between">
-
           <div className="px-4 py-3 bg-gray-200 border-t border-gray-300">
             <div className="max-w-full mx-auto flex items-center gap-3">
-              <div className="grow text-black font-bold"  >
-              <h1>Click to Start/Stop the session</h1>
+              <div className="grow text-black font-bold">
+                <h1>Click to Start/Stop the session</h1>
               </div>
               <button
                 type="button"
